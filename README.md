@@ -1,3 +1,11 @@
-Примеры для запуска находятся в файле tasks-example
+XXXToken deployed to: 0xBa90Abed8ac5253EE33cE7e13DfC79D9116aFA85
 
-Контракт верифицирован: https://rinkeby.etherscan.io/address/0x4E0135662390e9B411A192F914798a07A8074Cc9#code
+Uniswap LP token: 0x7561E26a63321F4D44725F714b1Bc4537EE0ef18
+
+ACDMToken deployed to: 0xa09C9C4BdCFA9181fBd3cd557bDF3Aa5E6bf58c8
+
+Staking deployed to: 0x4E7F004714b381b0A51843A2F7d0BE9865Fe07E9
+
+DAO deployed to: 0x2dC804bcbeEFceb692c0B05b46f19BD34784e3Ca
+
+ACDMPlatform deployed to: 0x3aAD8b4f46AC808d9D641978370EFdDBCe75f829

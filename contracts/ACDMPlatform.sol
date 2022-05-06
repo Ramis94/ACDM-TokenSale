@@ -15,7 +15,6 @@ contract ACDMPlatform is OnlyDAO {
     IERC20 private eth;
     mapping(address => address) referrals;
     uint256 private roundTime;
-    uint256 private acdmMult;
     Status private currentStatus;
     SaleRound private sale;
     TradeRound private trade;
@@ -89,32 +88,31 @@ contract ACDMPlatform is OnlyDAO {
         trade.firstLevelFee = 3;
         trade.secondLevelFee = 3;
         currentStatus = Status.INIT;
-        acdmMult = 10 ** acdmToken.decimals();
     }
 
     //нужно проверить что реферал существует в системе, реферальная система 2-ух уровневая
     //реферал может быть 0
     //для работы необязательно быть зареганым
     function register(address referral) public {
-        if (referral != address(0)) {
-            require(referrals[referral] != address(0), "ACDM: referral not found");
-        }
         referrals[msg.sender] = referral;
+    }
+
+    function register() public {
+        referrals[msg.sender] = address(0);
     }
 
     //продаем токенов на сумму 1eth(100_000 ACDM) (0,0000100 - цена 1 токена)
     //если токены не продались, то их сжигаем
     function startSaleRound() public {
         if (currentStatus == Status.INIT) {
-            sale.price = 10000000000000 wei;
             sale.amount = 100_000;
+            sale.price = 10000000000000;
         } else {
-            sale.price = sale.price / 100 * 3 + 400000000000;
-            sale.amount = trade.volume / sale.price;
+            sale.price = sale.price / 10300000000000 + 4000000000000;
+            sale.amount = (trade.volume / sale.price) * 10 ** acdmToken.decimals();
         }
         sale.endTime = block.timestamp + roundTime;
         acdmToken.mint(address(this), sale.amount);
-        console.log("%s : %s : %s", sale.price, sale.amount, sale.endTime);
         currentStatus = Status.SALE;
         emit SaleRoundStarted(sale.price, sale.amount, sale.endTime);
     }
@@ -122,46 +120,15 @@ contract ACDMPlatform is OnlyDAO {
     //если время вышло или продали все токены, то вызываем startTradeRound
     function buyACDM(uint256 amount) public payable {
         require(currentStatus == Status.SALE, "ACDMPlatform: is not sale status");
-        if (block.timestamp > sale.endTime) {
+        if (block.timestamp > sale.endTime || acdmToken.balanceOf(address(this)) == 0) {
             startTradeRound();
         } else {
-            require(amount < acdmToken.balanceOf(address(this)), "ACDMPlatform: amount is big");
+            require(amount <= acdmToken.balanceOf(address(this)), "ACDMPlatform: amount is big");
             acdmToken.transfer(msg.sender, amount);
-            (address referralFirstLevel, address referralSecondLevel) = findReferrals();
-            if (referralFirstLevel != address(0) && referralSecondLevel == address(0)) {
-                eth.transferFrom(
-                    msg.sender,
-                    address(this),
-                    (amount * sale.price / 100) * (100 - sale.firstLevelFee)
-                );
-                eth.transferFrom(
-                    msg.sender,
-                    referralFirstLevel,
-                    (amount * sale.price / 100) * sale.firstLevelFee
-                );
-            } else if (referralFirstLevel != address(0) && referralSecondLevel != address(0)) {
-                eth.transferFrom(
-                    msg.sender,
-                    address(this),
-                    (amount * sale.price / 100) * (100 - sale.firstLevelFee - sale.secondLevelFee)
-                );
-                eth.transferFrom(
-                    msg.sender,
-                    referralFirstLevel,
-                    (amount * sale.price / 100) * sale.firstLevelFee
-                );
-                eth.transferFrom(
-                    msg.sender,
-                    referralSecondLevel,
-                    (amount * sale.price / 100) * sale.secondLevelFee);
-            } else {
-                eth.transferFrom(msg.sender, address(this), amount * sale.price);
-            }
+            uint256 priceResult = amount * sale.price;
+            _ethTransferWithReferals(priceResult, sale.firstLevelFee, sale.secondLevelFee);
             sale.amount -= amount;
             emit ACDMBought(msg.sender, amount);
-            if (acdmToken.balanceOf(address(this)) == 0) {
-                startTradeRound();
-            }
         }
     }
 
@@ -201,42 +168,48 @@ contract ACDMPlatform is OnlyDAO {
             require(amount != 0, "ACDMPlatform: amount is 0");
             require(trade.orders[id].amount != 0, "ACDMPlatform: Order not found");
             Orders storage order = trade.orders[id];
-            require(order.amount > amount, "ACDMPlatform: amount is big");
+            require(order.amount >= amount, "ACDMPlatform: amount is big");
             acdmToken.transfer(msg.sender, amount);
-            (address referralFirstLevel, address referralSecondLevel) = findReferrals();
-            if (referralFirstLevel != address(0) && referralSecondLevel == address(0)) {
-                eth.transferFrom(
-                    msg.sender,
-                    address(this),
-                    (amount * order.price / 100) * (100 - trade.firstLevelFee)
-                );
-                eth.transferFrom(
-                    msg.sender,
-                    referralFirstLevel,
-                    (amount * order.price / 100) * trade.firstLevelFee
-                );
-            } else if (referralFirstLevel != address(0) && referralSecondLevel != address(0)) {
-                eth.transferFrom(
-                    msg.sender,
-                    address(this),
-                    (amount * order.price / 100) * (100 - trade.firstLevelFee - trade.secondLevelFee)
-                );
-                eth.transferFrom(
-                    msg.sender,
-                    referralFirstLevel,
-                    (amount * order.price / 100) * trade.firstLevelFee
-                );
-                eth.transferFrom(
-                    msg.sender,
-                    referralSecondLevel,
-                    (amount * order.price / 100) * trade.secondLevelFee);
-            } else {
-                eth.transferFrom(msg.sender, address(this), amount * order.price);
-            }
+            uint256 priceResult = amount * order.price;
+            _ethTransferWithReferals(priceResult, trade.firstLevelFee, trade.secondLevelFee);
+            trade.volume += priceResult;
             emit OrderRedeemed(msg.sender, amount);
             if (order.amount == 0) {
                 _removeOrder(id);
             }
+        }
+    }
+
+    function _ethTransferWithReferals(uint256 priceResult, uint256 firstLevelFee, uint256 secondLevelFee) private {
+        (address referralFirstLevel, address referralSecondLevel) = findReferrals();
+        if (referralFirstLevel != address(0) && referralSecondLevel == address(0)) {
+            eth.transferFrom(
+                msg.sender,
+                address(this),
+                (priceResult / 100) * (100 - firstLevelFee)
+            );
+            eth.transferFrom(
+                msg.sender,
+                referralFirstLevel,
+                (priceResult / 100) * firstLevelFee
+            );
+        } else if (referralFirstLevel != address(0) && referralSecondLevel != address(0)) {
+            eth.transferFrom(
+                msg.sender,
+                address(this),
+                (priceResult / 100) * (100 - firstLevelFee - secondLevelFee)
+            );
+            eth.transferFrom(
+                msg.sender,
+                referralFirstLevel,
+                (priceResult / 100) * firstLevelFee
+            );
+            eth.transferFrom(
+                msg.sender,
+                referralSecondLevel,
+                (priceResult / 100) * secondLevelFee);
+        } else {
+            eth.transferFrom(msg.sender, address(this), priceResult);
         }
     }
 

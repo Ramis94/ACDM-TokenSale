@@ -15,8 +15,6 @@ import {
   ETHMock,
   ETHMock__factory
 } from "../typechain";
-import { BigNumberish } from "ethers";
-import { parseUnits } from "@ethersproject/units/src.ts";
 
 describe("ACDMPlatform", function() {
   let eth: ETHMock;
@@ -28,11 +26,13 @@ describe("ACDMPlatform", function() {
   let owner: SignerWithAddress;
   let addr1: SignerWithAddress;
   let addr2: SignerWithAddress;
+  let refer1: SignerWithAddress;
+  let refer2: SignerWithAddress;
 
   const threeDays = 3 * (60 * 60 * 24);
 
   beforeEach(async function() {
-    [owner, addr1, addr2] = await ethers.getSigners();
+    [owner, addr1, addr2, refer1, refer2] = await ethers.getSigners();
 
     const ETHMockFactory = (await ethers.getContractFactory(
       "ETHMock",
@@ -105,26 +105,49 @@ describe("ACDMPlatform", function() {
       .approve(acdmPlatform.address, ethers.utils.parseEther("1"));
   });
 
-  it("should start", async function() {
+  it("should start without register", async function() {
+    await startPlatform();
+  });
+
+  it("should start with one refer level", async function() {
+    await acdmPlatform.connect(refer1)["register()"]();
+    await acdmPlatform.connect(addr1)["register(address)"](refer1.address);
+    await expect(await eth.balanceOf(refer1.address)).to.be.equal(0);
+    await startPlatform();
+    await expect(await eth.balanceOf(refer1.address)).to.be.not.equal(0);
+  });
+
+  it("should start with two refer level", async function() {
+    await acdmPlatform.connect(refer1)["register()"]();
+    await acdmPlatform.connect(refer2)["register(address)"](refer1.address);
+    await acdmPlatform.connect(addr1)["register(address)"](refer2.address);
+    await expect(await eth.balanceOf(refer1.address)).to.be.equal(0);
+    await expect(await eth.balanceOf(refer2.address)).to.be.equal(0);
+    await startPlatform();
+    await expect(await eth.balanceOf(refer1.address)).to.be.not.equal(0);
+    await expect(await eth.balanceOf(refer2.address)).to.be.not.equal(0);
+  });
+
+  async function startPlatform() {
     await acdmPlatform.startSaleRound();
-    await expect(acdmPlatform.connect(addr1).buyACDM(4))
+    await expect(acdmPlatform.connect(addr1).buyACDM(50_000))
       .to.emit(acdmPlatform, "ACDMBought")
-      .withArgs(addr1.address, 4);
-    await expect(acdmPlatform.connect(addr2).buyACDM(10))
+      .withArgs(addr1.address, 50_000);
+    await expect(acdmPlatform.connect(addr2).buyACDM(49_000))
       .to.emit(acdmPlatform, "ACDMBought")
-      .withArgs(addr2.address, 10);
+      .withArgs(addr2.address, 49_000);
     stopThread();
     // buyACDM start trade round
-    await expect(acdmPlatform.connect(addr1).buyACDM(4)).to.emit(
+    await expect(acdmPlatform.connect(addr1).buyACDM(0)).to.emit(
       acdmPlatform,
       "TradeRoundStarted"
     );
 
-    await acdmToken.connect(addr1).approve(acdmPlatform.address, 1000);
-    await expect(acdmPlatform.connect(addr1).addOrder(4, 123000)).to.emit(
+    await acdmToken.connect(addr1).approve(acdmPlatform.address, 100_000);
+    await expect(acdmPlatform.connect(addr1).addOrder(50_000, 123000)).to.emit(
       acdmPlatform,
       "OrderAdded"
-    ).withArgs(1, addr1.address, 4, 123000);
+    ).withArgs(1, addr1.address, 50_000, 123000);
     await expect(
       acdmPlatform.connect(addr1).removeOrder(190)
     ).to.be.revertedWith("ACDMPlatform: Order not found");
@@ -138,15 +161,16 @@ describe("ACDMPlatform", function() {
     ).to.emit(acdmPlatform, "OrderDeleted")
       .withArgs(1);
 
-    await expect(acdmPlatform.connect(addr1).addOrder(4, 256000))
+    await expect(acdmPlatform.connect(addr1).addOrder(50_000, 256000))
       .to.emit(acdmPlatform, "OrderAdded")
-      .withArgs(2, addr1.address, 4, 256000);
-    await expect(acdmPlatform.connect(addr2).redeemOrder(2, 2))
+      .withArgs(2, addr1.address, 50_000, 256000);
+    await expect(acdmPlatform.connect(addr2).redeemOrder(2, 50_000))
       .to.emit(acdmPlatform, "OrderRedeemed")
-      .withArgs(addr2.address, 2);
-
-
-  });
+      .withArgs(addr2.address, 50_000);
+    stopThread();
+    await expect(acdmPlatform.connect(addr2).redeemOrder(2, 2))
+      .to.emit(acdmPlatform, "SaleRoundStarted");
+  }
 
   async function stopThread() {
     await ethers.provider.send("evm_increaseTime", [threeDays]);
