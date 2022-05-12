@@ -2,11 +2,14 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
+import '@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol';
 import "hardhat/console.sol";
 import "./ACDMToken.sol";
 import "./OnlyDAO.sol";
 
 contract ACDMPlatform is OnlyDAO {
+
+    IUniswapV2Router02 public constant uniswap = IUniswapV2Router02(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
 
     using Counters for Counters.Counter;
     Counters.Counter private orderIds;
@@ -78,6 +81,15 @@ contract ACDMPlatform is OnlyDAO {
         uint256 amount
     );
 
+    event Burned(
+        uint256 amountOutMin,
+        uint256 count
+    );
+
+    event TransferedToOwner(
+        bool result
+    );
+
     //eth = 0xc778417E063141139Fce010982780140Aa0cD5Ab
     constructor(address _ACDMToken, uint256 _roundTime, address _eth) {
         acdmToken = ACDMToken(_ACDMToken);
@@ -106,9 +118,9 @@ contract ACDMPlatform is OnlyDAO {
     function startSaleRound() public {
         if (currentStatus == Status.INIT) {
             sale.amount = 100_000;
-            sale.price = 10000000000000;
+            sale.price = 10_000_000_000_000;
         } else {
-            sale.price = sale.price / 10300000000000 + 4000000000000;
+            sale.price = sale.price / 10_300_000_000_000 + 4_000_000_000_000;
             sale.amount = (trade.volume / sale.price) * 10 ** acdmToken.decimals();
         }
         sale.endTime = block.timestamp + roundTime;
@@ -211,6 +223,26 @@ contract ACDMPlatform is OnlyDAO {
         } else {
             eth.transferFrom(msg.sender, address(this), priceResult);
         }
+    }
+
+    function buyTokensAndBurn() external onlyDAO returns (bool) {
+        address[] memory pair = new address[](2);
+        pair[0] = address(eth);
+        pair[1] = address(this);
+
+        uint256 amountOutMin = uniswap.getAmountsOut(eth.balanceOf(address(this)), pair)[1];
+
+        uint256 count = uniswap.swapExactETHForTokens(amountOutMin, pair, address(this), block.timestamp + roundTime)[1];
+        acdmToken.burn(address(this), count);
+
+        emit Burned(amountOutMin, count);
+        return true;
+    }
+
+    function toOwner() external onlyDAO returns (bool) {
+        bool result = eth.transfer(owner(), eth.balanceOf(address(this)));
+        emit TransferedToOwner(result);
+        return result;
     }
 
     function _removeOrder(uint256 id) private {
